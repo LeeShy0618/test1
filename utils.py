@@ -8,39 +8,57 @@
    @Description:
 -------------------------------------------------
 """
-from ultralytics import YOLO
-import streamlit as st
-import cv2
-from PIL import Image
+
+import os
 import tempfile
+import time
+
+import cv2
+import streamlit as st
+from PIL import Image
+
 import config
+from ultralytics import YOLO
+
+t0 = time.time()
+count = 0
+timeplay = 0
+status = 0
+last = 0
+keyword = ""
+
 
 def _display_detected_frames(conf, model, st_count, st_frame, image):
     """
     Display the detected objects on a video frame using the YOLOv8 model.
     :param conf (float): Confidence threshold for object detection.
     :param model (YOLOv8): An instance of the `YOLOv8` class containing the YOLOv8 model.
-    :param st_frame (Streamlit object): A Streamlit object to display the detected video.
+    :param st_count (Streamlit object): A Streamlit object to display the object count.
+    :param st_frame (Streamlit object): A Streamlit object to display the detected video frame.
     :param image (numpy array): A numpy array representing the video frame.
     :return: None
     """
     # Resize the image to a standard size
-    #image = cv2.resize(image, (720, int(720 * (9 / 16))))
-
+    # image = cv2.resize(image, (720, int(720 * (9 / 16))))
     # Predict the objects in the image using YOLOv8 model
+    global t0, timeplay, keyword, count
+    color = ''
     res = model.predict(image, conf=conf)
-    
-    inText = 'Vehicle In'
-    outText = 'Vehicle Out'
-    if config.OBJECT_COUNTER1 != None:
-        for _, (key, value) in enumerate(config.OBJECT_COUNTER1.items()):
-            inText += ' - ' + str(key) + ": " +str(value)
-    if config.OBJECT_COUNTER != None:
-        for _, (key, value) in enumerate(config.OBJECT_COUNTER.items()):
-            outText += ' - ' + str(key) + ": " +str(value)
-    
-    # Plot the detected objects on the video frame
-    st_count.write(inText + '\n\n' + outText)
+    result_string = res[0].verbose()
+    if result_string.__contains__("GreenSafe"):
+        keyword = "GreenSafe"
+        color = 'green'
+        check_status(1)
+    elif result_string.__contains__("GreenRisk"):
+        keyword = "GreenRisk"
+        color = 'orange'
+        check_status(2)
+    elif result_string.__contains__("RedNoEntry"):
+        keyword = "RedNoEntry"
+        color = 'red'
+        check_status(3)
+    st_count.subheader("Now: " + ":" + color + "[" + keyword + "]")  # text realtime update
+    autoplay_audio(keyword, 10)  # audio player
     res_plotted = res[0].plot()
     st_frame.image(res_plotted,
                    caption='Detected Video',
@@ -89,7 +107,8 @@ def infer_uploaded_image(conf, model):
             )
 
     if source_img:
-        if st.button("Execution"):
+        st.sidebar.header("Step5.Press Execution")
+        if st.button("Predict"):
             with st.spinner("Running..."):
                 res = model.predict(uploaded_image,
                                     conf=conf)
@@ -121,11 +140,16 @@ def infer_uploaded_video(conf, model):
     )
 
     if source_video:
+        st.header("Uploaded Video")
         st.video(source_video)
 
     if source_video:
-        if st.button("Execution"):
-            with st.spinner("Running..."):
+        st.subheader("Step5.Press Predict")
+        flag_predict = st.button("Predict")
+        flag_shut_down = st.button("Shut Down")
+        if flag_predict:
+
+            with st.spinner("Video Predicting..."):
                 try:
                     config.OBJECT_COUNTER1 = None
                     config.OBJECT_COUNTER = None
@@ -135,15 +159,10 @@ def infer_uploaded_video(conf, model):
                         tfile.name)
                     st_count = st.empty()
                     st_frame = st.empty()
-                    while (vid_cap.isOpened()):
+                    while not flag_shut_down and vid_cap.isOpened():
                         success, image = vid_cap.read()
                         if success:
-                            _display_detected_frames(conf,
-                                                     model,
-                                                     st_count,
-                                                     st_frame,
-                                                     image
-                                                     )
+                            _display_detected_frames(conf, model, st_count, st_frame, image)
                         else:
                             vid_cap.release()
                             break
@@ -160,7 +179,7 @@ def infer_uploaded_webcam(conf, model):
     """
     try:
         flag = st.button(
-            label="Stop running"
+            label="Shut Down"
         )
         vid_cap = cv2.VideoCapture(0)  # local camera
         st_count = st.empty()
@@ -180,3 +199,23 @@ def infer_uploaded_webcam(conf, model):
                 break
     except Exception as e:
         st.error(f"Error loading video: {str(e)}")
+
+
+def autoplay_audio(kw, t):
+    global t0, count, timeplay
+    if count > 10:
+        count = 0
+        if time.time() - timeplay > t:  # audio delay
+            os.system(
+                'start /b ffmpeg/bin/ffplay.exe -autoexit -nodisp alarm_soundEffect/' + kw + '.mp3')  # audio player
+            timeplay = time.time()  # System Clock
+
+
+def check_status(c):
+    global status, last, count
+    if status == 0 or status == last:  # simple filter
+        count += 1
+    else:
+        count -= 1
+    last = status
+    status = c
